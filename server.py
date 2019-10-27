@@ -11,10 +11,49 @@
 
 import sys  #contains the command-line arguments passed to the script
 import socket
+import time
 
 serverPort = int(sys.argv[1])       #port is the first command line argument
 blockDuration = int(sys.argv[2])    #the duration in seconds for which a user is blocked after 3 login attempts
 timeout = int(sys.argv[3])           #after this time a user will be logged out due to inactivity
+
+loginAttempt = 0
+blockedUsers = []                    #list to keep track of all the blocked clients by username
+
+#takes in a username & password combination, returns the username
+def getUsername(loginRequest):
+    loginRequestList = loginRequest.split(" ")
+    username = loginRequestList[0]
+    return username
+
+#check if username password combination exists in credentials.txt
+#returns 1 if valid combination and 0 if not valid
+def authenticate(loginDetails):
+    f = open('credentials.txt', "r") #open the file
+    contents = f.read() #read the file
+    f.close()
+
+    if loginDetails in contents:
+        return 1
+    else:
+        return 0
+
+#Checks if the username of a client is currently blocked
+def checkBlocked(username):
+    if username in blockedUsers:  #if the username is in the list of blocked users, calculate how long they have been blocked
+        currentTime = time.time()
+        blockedTime = currentTime - startBlockTime
+        if blockedTime > blockDuration:      #if they have been blocked for the specified duration, remove them from the list
+            blockedUsers.remove(username)
+            loginAttempt = 0                 #reset login attempt counter to 0
+            result = "not blocked"
+            return result
+        else:                                #otherwise, they will remain in the list
+            result = "blocked"
+            return result
+    else:                                    #if they are not in the blocked users' list, return "not blocked"
+        result = "not blocked"
+        return result
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 #create server socket
@@ -36,28 +75,29 @@ while 1:
     #the client and server can now send bytes to each other over the connection. With TCP, all bytes 
     #sent from one side not are not only guaranteed to arrive at the other side but also guaranteed to arrive in order
 
-    request = connectionSocket.recv(1024)
     #wait for data to arrive from the client
+    request = connectionSocket.recv(1024)
 
-    f = open('credentials.txt', "r") #open the file
-    contents = f.read() #read the file
-    f.close()
+    #process the string to get the client's username
+    clientUsername = getUsername(request)
 
-    if request in contents:
-        loginResult = "Authenticated, you in bitch!"
-    else:
-        loginResult = "Invalid Password. Please try again"
-
-    connectionSocket.send(loginResult)
-
-
-
-
-
-
-
-
-
-
-
+    if checkBlocked(clientUsername) == "blocked":   #check to see if user is currently blocked
+        loginResult = "Your account is blocked due to multiple login failures. Please try again later"
+        connectionSocket.send(loginResult)
+        connectionSocket.close()                    #close the connectionSocket if they are blocked
+    elif checkBlocked(clientUsername) == "not blocked":
+        if authenticate(request) == 1:              #if the username is not blocked, check credentials.txt to see if the username & password is valid
+            loginResult = "Authenticated"
+            connectionSocket.send(loginResult)      #if valid, send the result to the client
+        else:
+            loginResult = "Invalid Password. Please try again"
+            loginAttempt = loginAttempt + 1         #otherwise, start counting number of login attempts if wrong password is entered
+            if loginAttempt == 3:
+                startBlockTime = time.time()        #block the client here; record the current time
+                blockUsername = getUsername(request)#get the username of the client to be blocked
+                blockedUsers.append(blockUsername)  #add the username to the list of blocked users
+                print(blockedUsers)
+                loginResult = "Invalid Password. Your account has been blocked. Please try again later"
+            connectionSocket.send(loginResult)
+            connectionSocket.close()   #close the connectionSocket. Note that the serverSocket is still alive waiting for new clients
 
