@@ -8,10 +8,12 @@
 
 #A good place to start would be to implement the functionality to allow a single user to
 #login with the server. Next, add the blocking functionality for 3 unsuccessful attempts
+#You could then proceed to the timeout functionality (i.e. automatically logout a user after inactivity. 
 
 import sys  #contains the command-line arguments passed to the script
 import socket
 import time
+import threading
 
 serverPort = int(sys.argv[1])       #port is the first command line argument
 blockDuration = int(sys.argv[2])    #the duration in seconds for which a user is blocked after 3 login attempts
@@ -19,6 +21,7 @@ timeout = int(sys.argv[3])           #after this time a user will be logged out 
 
 loginAttempt = 0
 blockedUsers = []                    #list to keep track of all the blocked clients by username
+onlineUsers = []                     #list to keep track of all online users who have been authenticated
 
 #takes in a username & password combination, returns the username
 def getUsername(loginRequest):
@@ -55,6 +58,10 @@ def checkBlocked(username):
         result = "not blocked"
         return result
 
+def endConnection():
+	connectionSocket.close()
+	print("ending connection")
+
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 #create server socket
 
@@ -78,6 +85,10 @@ while 1:
     #wait for data to arrive from the client
     request = connectionSocket.recv(1024)
 
+    #the time of the user's most recent request
+    timeoutTimer = threading.Timer(timeout, endConnection)
+    #timeoutTimer.start()
+
     #process the string to get the client's username
     clientUsername = getUsername(request)
 
@@ -85,10 +96,12 @@ while 1:
         loginResult = "Your account is blocked due to multiple login failures. Please try again later"
         connectionSocket.send(loginResult)
         connectionSocket.close()                    #close the connectionSocket if they are blocked
-    elif checkBlocked(clientUsername) == "not blocked":
+    elif checkBlocked(clientUsername) == "not blocked" and clientUsername not in onlineUsers: #to log in the user, check that they're not blocked and that they're not already online
         if authenticate(request) == 1:              #if the username is not blocked, check credentials.txt to see if the username & password is valid
+            onlineUsers.append(clientUsername)
             loginResult = "Authenticated"
             connectionSocket.send(loginResult)      #if valid, send the result to the client
+            print("%s is online" %onlineUsers)
         else:
             loginResult = "Invalid Password. Please try again"
             loginAttempt = loginAttempt + 1         #otherwise, start counting number of login attempts if wrong password is entered
@@ -100,4 +113,8 @@ while 1:
                 loginResult = "Invalid Password. Your account has been blocked. Please try again later"
             connectionSocket.send(loginResult)
             connectionSocket.close()   #close the connectionSocket. Note that the serverSocket is still alive waiting for new clients
+    else:
+        print("You are already logged in")
 
+
+  
