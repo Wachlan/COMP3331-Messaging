@@ -15,7 +15,6 @@ from threading import Thread
 serverIP = str(sys.argv[1])
 serverPort = int(sys.argv[2])
 
-
 def login_handler():
     while(1):
         username = raw_input('Username:')
@@ -32,7 +31,8 @@ def login_handler():
 def messaging_handler(sock):
     thread.start_new_thread(recv_handler, (sock, ))
     while(1):
-        command = raw_input('Command:')
+        #command = raw_input('Command:')
+        command = raw_input('')
         sock.send(command)
 
 def recv_handler(sock):
@@ -52,7 +52,11 @@ recv_thread=threading.Thread(name="LoginHandler", target=login_handler)
 recv_thread.daemon=True
 recv_thread.start()
 
+"""
+send_thread=threading.Thread(name="SendHandler",target=send_handler)
+send_thread.daemon=True
+send_thread.start()"""
+
 #this is the main thread
 while True:
     time.sleep(0.1)
-
