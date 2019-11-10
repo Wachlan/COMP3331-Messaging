@@ -16,6 +16,7 @@ import time
 import thread
 import threading
 from threading import Thread
+from collections import defaultdict
 
 serverPort = int(sys.argv[1])       #port is the first command line argument
 blockDuration = int(sys.argv[2])    #the duration in seconds for which a user is blocked after 3 login attempts
@@ -24,14 +25,15 @@ timeout = int(sys.argv[3])           #after this time a user will be logged out 
 blockedUsers = {}                   #Dictionary containing username and time the user was blocked
 onlineUsers = {}                    #Dictionary with username and time user logged on
 loginRecord = {}                    #Dictionary with username and time of login, regardless of whether they are still online
-#connectionSockets = []
 connectionSockets = {}
+offlineMessages = defaultdict(list)  #list backed multidictionary to store messages for offline users
 
 class client:
     name = ""
     lastAction = 0
     loginAttempt = 0
-    startBlockTime = 0
+    #startBlockTime = 0
+    blacklist = []
 
 
 #takes in a username & password combination, returns the username
@@ -108,6 +110,43 @@ def whoElseSince(clientUsername, connectionSocket, period):
     message = "Other users logged on in the past %s seconds: %s" %(period, otherUsers)
     connectionSocket.send(message)
 
+def broadcast(clientUsername, message):
+    global connectionSockets
+
+    for x in connectionSockets:
+        if x != clientUsername:
+            socket = connectionSockets.get(x)
+            joinedMessage = " ".join(message)
+            socket.send(joinedMessage)
+        
+def sendMessage(sender, receiver, message):
+    global connectionSockets
+    global offlineMessages
+
+    if str(receiver) == str(sender):
+        senderSocket = connectionSockets.get(sender)
+        errorMessage = "Error: You cannot message yourself"
+        senderSocket.send(errorMessage)
+
+    elif receiver in connectionSockets:
+        receiverSocket = connectionSockets.get(receiver)
+        joinedMessage = "%s: " %sender + " ".join(message) + "\n"
+        receiverSocket.send(joinedMessage)
+
+    elif authenticate(receiver) == 1:
+        senderSocket = connectionSockets.get(sender)
+        #If the receiver is offline then store the message
+        joinedMessage = "%s: " %sender + " ".join(message)
+        offlineMessages[receiver].append(joinedMessage)
+        #print(offlineMessages)
+        errorMessage = "Error: %s is not online. Message has been stored" %receiver
+        senderSocket.send(errorMessage)
+        print("store message here")
+
+    elif authenticate(receiver) == 0:
+        senderSocket = connectionSockets.get(sender)
+        errorMessage = "Error: This user does not exist"
+        senderSocket.send(errorMessage)
    
 def recv_handler(connectionSocket):
     global onlineUsers
@@ -145,15 +184,20 @@ def recv_handler(connectionSocket):
                 thread.exit()
         elif checkBlocked(clientUsername) == "not blocked" and newClient.name not in onlineUsers: #to log in the user, check that they're not blocked and that they're not already online
             if authenticate(request) == 1:              #if the username is not blocked, check credentials.txt to see if the username & password is valid
-                #onlineUsers.append(clientUsername)
                 loginTime = time.time()
                 onlineUsers[clientUsername] = loginTime
                 loginRecord[clientUsername] = loginTime #for the whoElseSince function
-                print("User %s logged in at time %s" %(clientUsername, loginTime))
+                #print("User %s logged in at time %s" %(clientUsername, loginTime))
+                #print(onlineUsers)
                 loginResult = "Authenticated\n"
                 connectionSocket.send(loginResult)      #if valid, send the result to the client
                 presenceBroadcast(clientUsername, "on")       #Someone has logged in, so send this result to everyone else online
-                #connectionSockets.append(connectionSocket)
+                #send the user that just logged on their offline messages
+                if clientUsername in offlineMessages:
+                    for x in offlineMessages[clientUsername]:
+                        x = x + "\n"
+                        connectionSocket.send(x)        #send the messages received offline to the user
+                    del offlineMessages[clientUsername] #once the messages have been sent, remove the messages from storage
                 connectionSockets[clientUsername] = connectionSocket
 
                 # Start a new thread and return its identifier 
@@ -189,8 +233,13 @@ def recv_handler(connectionSocket):
                 thread.exit()
 
 def messaging_handler(connectionSocket, newClient):
+    global onlineUsers
+    global blockedUsers
+    global connectionSockets
+    global loginRecord
+
     print("Messaging thread started for %s" %newClient.name)
-    timeoutTimer = threading.Timer(timeout, endConnection, [connectionSocket])
+    #timeoutTimer = threading.Timer(timeout, endConnection, [connectionSocket])
 
     while(1):
         """try:
@@ -203,21 +252,26 @@ def messaging_handler(connectionSocket, newClient):
             #timeoutTimer.start()            
             time.sleep(1)"""
 
-        #print("here")
+        timeoutTimer = threading.Timer(timeout, endConnection, [connectionSocket])
+        try:
+            timeoutTimer.start()
+            print("timer started")
+        except:
+            print("couldn't start timer")
+            thread.exit()
         request = connectionSocket.recv(1024)
-        #print(request)
-        #newClient.lastAction = time.time()
-        #print("here 2")
+        timeoutTimer.cancel()
+        print("timer cancelled")
         
 
         command = request.split(" ")
-        #print(command[0])
         if command[0] == "logout":
-            #onlineUsers.remove(newClient.name)
             del onlineUsers[newClient.name]
-            #connectionSockets.remove(connectionSocket)
             del connectionSockets[newClient.name]
             presenceBroadcast(newClient.name, "off")
+            message = "You have been logged out\n"
+            connectionSocket.send(message)
+            thread.exit()
 
         if command[0] == "whoelse":
             whoElse(newClient.name, connectionSocket)
@@ -225,9 +279,15 @@ def messaging_handler(connectionSocket, newClient):
         if command[0] == "whoelsesince":
             time = command[1]
             whoElseSince(newClient.name, connectionSocket, time)
-            
 
+        if command[0] == "broadcast":
+            message = command[1:]
+            broadcast(newClient.name, message)
         
+        if command[0] == "message":
+            user = command[1]
+            message = command[2:]
+            sendMessage(newClient.name, user, message)
 
 
 def send_handler():
@@ -253,6 +313,16 @@ sock.bind(('localhost', serverPort))
 sock.listen(1)
 #The serverSocket then goes in the listen state to listen for client connection requests. 
 print('Server is ready for service')
+
+"""
+recv_thread=threading.Thread(name="RecvHandler", target=recv_handler)
+recv_thread.daemon=True
+recv_thread.start()
+
+send_thread=threading.Thread(name="SendHandler",target=send_handler)
+send_thread.daemon=True
+send_thread.start()
+"""
 
 #this is the main thread
 while True:
