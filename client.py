@@ -16,15 +16,16 @@ serverIP = str(sys.argv[1])
 serverPort = int(sys.argv[2])
 
 def login_handler():
+    username = raw_input('Username:')
     while(1):
-        username = raw_input('Username:')
+        #username = raw_input('Username:')
         password = raw_input('Password:')
         loginDetails = username + " " + password
         sock.send(loginDetails)
 
         infoReceived = sock.recv(1024)
         print(infoReceived)
-        if infoReceived == "Authenticated\n":
+        if infoReceived == "Authenticated":
             thread.start_new_thread(messaging_handler, (sock, ))
             thread.exit()
 
@@ -39,6 +40,14 @@ def recv_handler(sock):
     while(1):
         infoReceived = sock.recv(1024)
         print(infoReceived)
+
+"""
+def send_handler():
+    time.sleep(3)
+    while(1):
+        command = raw_input('Command:')
+        sock.send(command)
+        #print("send handler loop")"""
 
 
 # Create a TCP/IP socket
