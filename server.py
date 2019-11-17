@@ -25,15 +25,21 @@ timeout = int(sys.argv[3])           #after this time a user will be logged out 
 blockedUsers = {}                   #Dictionary containing username and time the user was blocked
 onlineUsers = {}                    #Dictionary with username and time user logged on
 loginRecord = {}                    #Dictionary with username and time of login, regardless of whether they are still online
-connectionSockets = {}
+connectionSockets = {}              #Dictionary with username and socket connection
 offlineMessages = defaultdict(list)  #list backed multidictionary to store messages for offline users
+blacklistedUsers = defaultdict(list)  #list backed multidictionary to store which clients have blocked each other
+
+#counter = 0
+#clientList = []
 
 class client:
     name = ""
     lastAction = 0
     loginAttempt = 0
-    #startBlockTime = 0
     blacklist = []
+
+    #def addBlacklist(self, name):
+    #    self.blacklist.append(name)
 
 
 #takes in a username & password combination, returns the username
@@ -78,13 +84,21 @@ def endConnection(connectionSocket):
 	connectionSocket.close()
 	print("ending connection")
 
-def presenceBroadcast(clientUsername, status):
+def presenceBroadcast(newClient, status):
     global connectionSockets
+    global blacklistedUsers
 
-    for x in connectionSockets:
-        message = "%s has logged %s\n" %(clientUsername, status)
-        socket = connectionSockets.get(x)
-        socket.send(message)
+    for users in connectionSockets:
+        if newClient.name in blacklistedUsers[users]:
+            continue
+
+        if users in blacklistedUsers[newClient.name]:
+            continue
+
+        else:
+            message = "%s has logged %s\n" %(newClient.name, status)
+            socket = connectionSockets.get(users)
+            socket.send(message)
 
 def whoElse(clientUsername, connectionSocket):
     global onlineUsers
@@ -100,6 +114,8 @@ def whoElse(clientUsername, connectionSocket):
 
 def whoElseSince(clientUsername, connectionSocket, period):
     global loginRecord
+    global time
+
     otherUsers = []
     currentTime = time.time()
 
@@ -110,16 +126,39 @@ def whoElseSince(clientUsername, connectionSocket, period):
     message = "Other users logged on in the past %s seconds: %s" %(period, otherUsers)
     connectionSocket.send(message)
 
-def broadcast(clientUsername, message):
+"""def broadcast(clientUsername, message):
     global connectionSockets
 
     for x in connectionSockets:
         if x != clientUsername:
             socket = connectionSockets.get(x)
             joinedMessage = " ".join(message)
+            socket.send(joinedMessage)"""
+
+def broadcast(newClient, message):
+    global connectionSockets
+    global blacklistedUsers
+    senderSocket = connectionSockets.get(newClient.name)
+    errorMessageFlag = 0
+
+    for users in connectionSockets:
+        if newClient.name in blacklistedUsers[users]:
+            errorMessageFlag = 1
+            continue
+        if users in blacklistedUsers[newClient.name]:     #similarly, if someone has blocked a client, they cannot broadcast to them
+            errorMessageFlag = 1
+            continue
+        if users != newClient.name:
+            socket = connectionSockets.get(users)
+            joinedMessage = " ".join(message)
             socket.send(joinedMessage)
+
+    if errorMessageFlag == 1:
+        errorMessage = "Your message could not be delievered to some recipients"
+        senderSocket.send(errorMessage)
+
         
-def sendMessage(sender, receiver, message):
+"""def sendMessage(sender, receiver, message):
     global connectionSockets
     global offlineMessages
 
@@ -146,25 +185,150 @@ def sendMessage(sender, receiver, message):
     elif authenticate(receiver) == 0:
         senderSocket = connectionSockets.get(sender)
         errorMessage = "Error: This user does not exist"
+        senderSocket.send(errorMessage)"""
+
+def sendMessage(newClient, receiver, message):
+    global connectionSockets
+    global offlineMessages
+    global blacklistedUsers
+
+    senderSocket = connectionSockets.get(newClient.name)
+    receiverSocket = connectionSockets.get(receiver)
+
+    #print("%s is trying to send a message to %s" %(newClient.name, receiver))
+
+    if str(receiver) == str(newClient.name):
+        errorMessage = "Error: You cannot message yourself"
         senderSocket.send(errorMessage)
+
+    #elif receiver in newClient.blacklist:
+        #errorMessage = "Error: You have blocked this user"
+        #senderSocket.send(errorMessage)
+
+    #elif newClient.name in blacklistedUsers and blacklistedUsers[newClient.name] != None:
+       # if receiver in blacklistedUsers[newClient.name]:
+         #   errorMessage = "Error: This user is blocked"
+         #   senderSocket.send(errorMessage)
+
+   # elif receiver in blacklistedUsers and blacklistedUsers[receiver] != None:
+    #    if newClient.name in blacklistedUsers[receiver]:
+      #      errorMessage = "Error: This user is blocked"
+         #   senderSocket.send(errorMessage)
+
+    elif receiver in blacklistedUsers[newClient.name]:
+            errorMessage = "Error: This user is blocked"
+            senderSocket.send(errorMessage)
+
+    elif newClient.name in blacklistedUsers[receiver]:
+            errorMessage = "Error: This user is blocked"
+            senderSocket.send(errorMessage)
+
+    elif receiver in connectionSockets:
+        joinedMessage = "%s: " %newClient.name + " ".join(message) + "\n"
+        receiverSocket.send(joinedMessage)
+
+    elif authenticate(receiver) == 1:
+        print("store message here")
+        #If the receiver is offline then store the message
+        joinedMessage = "%s: " %newClient.name + " ".join(message)
+        offlineMessages[receiver].append(joinedMessage)
+        errorMessage = "Error: %s is not online. Message has been stored" %receiver
+        senderSocket.send(errorMessage)
+
+    elif authenticate(receiver) == 0:
+        errorMessage = "Error: This user does not exist"
+        senderSocket.send(errorMessage)
+
+    else:
+        errorMessage = "Error: Message could not be delivered"
+        senderSocket.send(errorMessage)
+
+def blacklistUser(newClient, bully):
+    global connectionSockets
+    senderSocket = connectionSockets.get(newClient.name)
+
+    #print("client object passed in is %s" %newClient)
+
+    if str(bully) == str(newClient.name):
+        errorMessage = "Error: You cannot blacklist yourself"
+        senderSocket.send(errorMessage)
+
+    elif authenticate(bully) == 1:
+        #newClient.blacklist.append(bully)  #add the blacklisted user to the client's list
+        #newClient.addBlackList(bully)
+        blacklistedUsers[newClient.name].append(bully)    #the client can't send messages to the bully now
+        blacklistedUsers[bully].append(newClient.name)    #the bully can't send messages to the client now
+        print("%s and %s can't message each other now" %(bully, blacklistedUsers[bully]))
+        Message = "%s has been blacklisted" %bully
+        senderSocket.send(Message)
+
+    elif authenticate(bully) == 0:
+        errorMessage = "Error: This user does not exist"
+        senderSocket.send(errorMessage)
+
+def unblacklistUser(newClient, bully):
+    global connectionSockets
+    senderSocket = connectionSockets.get(newClient.name)
+
+    if str(bully) == str(newClient.name):
+        errorMessage = "Error: You cannot unblock yourself"
+        senderSocket.send(errorMessage)
+
+    #elif bully in newClient.blacklist:
+        #newClient.blacklist.remove(bully)            #remove the blocked user from the client's list
+    #elif bully in blacklistedUsers[newClient.name]:
+        #blacklistedUsers[newClient.name].remove(bully)
+        #blacklistedUsers[bully].remove(newClient.name)
+        #if newClient.name in blacklistedUsers[bully]:
+            #blacklistedUsers[bully].remove(newClient.name)
+            #print("blocked clients %s" %blacklistedUsers[bully])
+        #Message = "%s has been unblocked" %bully
+        #senderSocket.send(Message)
+
+    elif bully in blacklistedUsers[newClient.name]:
+        blacklistedUsers[newClient.name].remove(bully)
+        blacklistedUsers[bully].remove(newClient.name)
+        Message = "%s has been unblocked" %bully
+        senderSocket.send(Message)
+        print(blacklistedUsers)
+
+    elif authenticate(bully) == 1:
+        errorMessage = "Error: This user is not currently blocked"
+        senderSocket.send(errorMessage)
+
+    elif authenticate(bully) == 0:
+        errorMessage = "Error: This user does not exist"
+        senderSocket.send(errorMessage)
+
+    else:
+        errorMessage = "Error: Action unavailable"
+        senderSocket.send(errorMessage)
+
    
 def recv_handler(connectionSocket):
     global onlineUsers
     global blockedUsers
-    #global loginAttempt
-    #global startBlockTime
     global connectionSockets
     global loginRecord
+    #global counter
+    global clientList
 
     newClient = client()
-    print("new thread started")
+    #counter = counter + 1
+    #clientList.append(newClient)
+    #print("client list has %s" %clientList)
 
     while(1):
+        #global clientList
+        global onlineUsers
+        global time
+
         try:
             #wait for data to arrive from the client
             request = connectionSocket.recv(1024)
         except:
             print("Could not receive data")
+            thread.exit()
 
         #process the string to get the client's username
         clientUsername = getUsername(request)
@@ -184,14 +348,18 @@ def recv_handler(connectionSocket):
                 thread.exit()
         elif checkBlocked(clientUsername) == "not blocked" and newClient.name not in onlineUsers: #to log in the user, check that they're not blocked and that they're not already online
             if authenticate(request) == 1:              #if the username is not blocked, check credentials.txt to see if the username & password is valid
-                loginTime = time.time()
-                onlineUsers[clientUsername] = loginTime
-                loginRecord[clientUsername] = loginTime #for the whoElseSince function
+                #loginTime = 0
+                #loginTime = time.time()
+                #onlineUsers[clientUsername] = loginTime
+                #loginRecord[clientUsername] = loginTime #for the whoElseSince function"""
+                onlineUsers[clientUsername] = time.time()
+                loginRecord[clientUsername] = time.time() #for the whoElseSince function
                 #print("User %s logged in at time %s" %(clientUsername, loginTime))
                 #print(onlineUsers)
-                loginResult = "Authenticated\n"
+                loginResult = "Authenticated"
                 connectionSocket.send(loginResult)      #if valid, send the result to the client
-                presenceBroadcast(clientUsername, "on")       #Someone has logged in, so send this result to everyone else online
+                time.sleep(0.2)
+                presenceBroadcast(newClient, "on")       #Someone has logged in, so send this result to everyone else online
                 #send the user that just logged on their offline messages
                 if clientUsername in offlineMessages:
                     for x in offlineMessages[clientUsername]:
@@ -200,11 +368,86 @@ def recv_handler(connectionSocket):
                     del offlineMessages[clientUsername] #once the messages have been sent, remove the messages from storage
                 connectionSockets[clientUsername] = connectionSocket
 
-                # Start a new thread and return its identifier 
-                thread.start_new_thread(messaging_handler, (connectionSocket, newClient, ))
+                """# Start a new thread and return its identifier 
+                #thread.start_new_thread(messaging_handler, (connectionSocket, newClient, ))
+                clientObject = clientList[counter-1]
+                thread.start_new_thread(messaging_handler, (connectionSocket, clientObject, ))
 
                 # Exit this thread
-                thread.exit()
+                thread.exit()"""
+
+
+                print("Messaging thread started for %s" %newClient.name)
+                print("blacklisted users are %s" %newClient.blacklist)
+                while(1):
+                    #global onlineUsers
+                    #global blockedUsers
+                    #global connectionSockets
+                    #global loginRecord
+                    #global counter
+                    #global clientList
+
+                    timeoutTimer = threading.Timer(timeout, endConnection, [connectionSocket])
+ 
+                    try:
+                        timeoutTimer.start()
+                        #print("timer started")
+                    except:
+                        print("couldn't start timer")
+                        thread.exit()
+
+                    try:
+                        request = connectionSocket.recv(1024)
+                    except:
+                        thread.exit()
+                        print("thread shutting down")
+
+                    timeoutTimer.cancel()
+
+
+                    command = request.split(" ")
+
+                    if command[0] == "logout":
+                        del onlineUsers[newClient.name]
+                        del connectionSockets[newClient.name]
+                        presenceBroadcast(newClient, "off")
+                        message = "You have been logged out\n"
+                        connectionSocket.send(message)
+                        thread.exit()
+
+                    elif command[0] == "whoelse":
+                       whoElse(newClient.name, connectionSocket)
+
+                    elif command[0] == "whoelsesince":
+                       period = command[1]
+                       whoElseSince(newClient.name, connectionSocket, period)
+
+                    elif command[0] == "broadcast":
+                        message = command[1:]
+                        broadcast(newClient, message)
+        
+                    elif command[0] == "message":
+                        user = command[1]
+                        message = command[2:]
+                        sendMessage(newClient, user, message)
+
+                    elif command[0] == "block":
+                        user = command[1]                #get the name of the user to be blocked
+                        blacklistUser(newClient, user)   #block this user
+
+                    elif command[0] == "unblock":
+                        user = command[1]                  #get the name of the user to be unblocked
+                        unblacklistUser(newClient, user)   #unlock this user
+
+                    else:
+                        message = "Error: Invalid command"
+                        try:
+                            connectionSocket.send(message)
+                        except:
+                            thread.exit()
+
+
+
             else:
                 newClient.loginAttempt = newClient.loginAttempt + 1     #otherwise, start counting number of login attempts if wrong password is entered
                 print(newClient.loginAttempt)
@@ -231,64 +474,6 @@ def recv_handler(connectionSocket):
             except:
                 print("Could not send message. Ending thread")
                 thread.exit()
-
-def messaging_handler(connectionSocket, newClient):
-    global onlineUsers
-    global blockedUsers
-    global connectionSockets
-    global loginRecord
-
-    print("Messaging thread started for %s" %newClient.name)
-    #timeoutTimer = threading.Timer(timeout, endConnection, [connectionSocket])
-
-    while(1):
-        """try:
-            timeoutTimer.start()
-            request = connectionSocket.recv(1024)
-            print(request)
-            timeoutTimer.cancel()
-        except:
-            print("Could not receive data")
-            #timeoutTimer.start()            
-            time.sleep(1)"""
-
-        timeoutTimer = threading.Timer(timeout, endConnection, [connectionSocket])
-        try:
-            timeoutTimer.start()
-            print("timer started")
-        except:
-            print("couldn't start timer")
-            thread.exit()
-        request = connectionSocket.recv(1024)
-        timeoutTimer.cancel()
-        print("timer cancelled")
-        
-
-        command = request.split(" ")
-        if command[0] == "logout":
-            del onlineUsers[newClient.name]
-            del connectionSockets[newClient.name]
-            presenceBroadcast(newClient.name, "off")
-            message = "You have been logged out\n"
-            connectionSocket.send(message)
-            thread.exit()
-
-        if command[0] == "whoelse":
-            whoElse(newClient.name, connectionSocket)
-
-        if command[0] == "whoelsesince":
-            time = command[1]
-            whoElseSince(newClient.name, connectionSocket, time)
-
-        if command[0] == "broadcast":
-            message = command[1:]
-            broadcast(newClient.name, message)
-        
-        if command[0] == "message":
-            user = command[1]
-            message = command[2:]
-            sendMessage(newClient.name, user, message)
-
 
 def send_handler():
     #global t_lock
